@@ -1,25 +1,58 @@
 {
   "name": "ubean/psalm-internal-extends",
-  "description": "test",
-  "type": "library",
-  "require": {
-    "php": "^8.1",
-    "vimeo/psalm": "^6.13"
-  },
+  "description": "Psalm plugin that enforces @internal / @psalm-internal for traits (and similar) across namespaces.",
+  "type": "psalm-plugin",
   "license": "MIT",
+  "homepage": "https://github.com/ubean/psalm-internal-extends",
+  "keywords": ["psalm", "plugin", "static-analysis", "php", "internal", "traits"],
+  "support": {
+    "issues": "https://github.com/ubean/psalm-internal-extends/issues",
+    "source": "https://github.com/ubean/psalm-internal-extends"
+  },
+  "require": {
+    "php": "^8.1"
+  },
+  "require-dev": {
+    "vimeo/psalm": "^6.13",
+    "phpunit/phpunit": "^11.5"
+  },
   "autoload": {
     "psr-4": {
       "Ubean\\PsalmInternalExtends\\": "src/"
     }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Ubean\\PsalmInternalExtends\\Tests\\": "tests/"
+    }
+  },
+  "extra": {
+    "psalm": {
+      "pluginClass": "Ubean\\PsalmInternalExtends\\Plugin"
+    }
+  },
+  "scripts": {
+    "psalm": "vendor/bin/psalm",
+    "test": "vendor/bin/phpunit --colors=always"
+  },
+  "config": {
+    "preferred-install": "dist",
+    "sort-packages": true
+  },
+  "archive": {
+    "exclude": [
+      "/.github",
+      "/.idea",
+      "/.vscode",
+      "/tests",
+      "/psalm.xml",
+      "/phpunit.xml*"
+    ]
   },
   "authors": [
     {
       "name": "Muhammad Rizal",
       "email": "ubeannn@gmail.com"
     }
-  ],
-  "minimum-stability": "stable",
-  "require-dev": {
-    "phpunit/phpunit": "^12.3"
-  }
+  ]
 }
