@@ -18,17 +18,17 @@
   },
   "autoload": {
     "psr-4": {
-      "Ubean\\PsalmInternalExtends\\": "src/"
+      "Ubean\\Psalm\\Internal\\TraitEnforcer\\": "src/"
     }
   },
   "autoload-dev": {
     "psr-4": {
-      "Ubean\\PsalmInternalExtends\\Tests\\": "tests/"
+      "Ubean\\Psalm\\Internal\\TraitEnforcer\\Tests\\": "tests/"
     }
   },
   "extra": {
     "psalm": {
-      "pluginClass": "Ubean\\PsalmInternalExtends\\Plugin"
+      "pluginClass": "Ubean\\Psalm\\Internal\\TraitEnforcer\\Plugin"
     }
   },
   "scripts": {
