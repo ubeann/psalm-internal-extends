@@ -17,6 +17,7 @@
     "phpunit/phpunit": "^11.5"
   },
   "autoload": {
+    "classmap": ["src/"],
     "psr-4": {
       "Ubean\\Psalm\\Internal\\TraitEnforcer\\": "src/"
     }
@@ -33,7 +34,7 @@
   },
   "scripts": {
     "psalm": "vendor/bin/psalm",
-    "test": "vendor/bin/phpunit --colors=always"
+    "test": "vendor/bin/phpunit --colors=always tests"
   },
   "config": {
     "preferred-install": "dist",
