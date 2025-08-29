@@ -1,0 +1,21 @@
+{
+    "name": "ubean/psalm-internal-extends",
+    "description": "test",
+    "type": "library",
+    "require": {
+        "vimeo/psalm": "^6.13"
+    },
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Ubean\\PsalmInternalExtends\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Muhammad Rizal",
+            "email": "ubeannn@gmail.com"
+        }
+    ],
+    "minimum-stability": "stable"
+}
