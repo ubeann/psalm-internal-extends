@@ -48,9 +48,16 @@ final class Plugin implements PluginEntryPointInterface
             $registration->registerHooksFromClass(TraitUseEnforcer::class);
         }
 
-        // If you add plugin options later, parse $config here and wire them into your hooks.
-        // Example:
-        // $policy = (string)($config->policy ?? 'namespace'); // 'namespace' | 'package'
-        // TraitUseEnforcer::setPolicy($policy);
+        // Parse plugin options from <pluginClass> node and wire to hooks.
+        // Supported options:
+        // - policy: "namespace" | "package" (default: namespace)
+        $policy = 'namespace';
+        if ($config !== null && isset($config->policy)) {
+            $policy = (string) $config->policy;
+        }
+
+        if (method_exists(TraitUseEnforcer::class, 'setPolicy')) {
+            TraitUseEnforcer::setPolicy($policy);
+        }
     }
 }

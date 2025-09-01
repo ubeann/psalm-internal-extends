@@ -34,6 +34,26 @@ use Ubean\Psalm\Internal\TraitEnforcer\Issues\InternalTraitUse;
 final class TraitUseEnforcer implements AfterClassLikeAnalysisInterface
 {
     /**
+     * Enforcement policy.
+     * - namespace: allow when namespaces are same or one is ancestor/descendant of the other
+     * - package:   allow when the top-level namespace segment matches (e.g., Vendor\*)
+     *
+     * @var 'namespace'|'package'
+     */
+    private static string $policy = 'namespace';
+
+    /**
+     * Configure the enforcement policy.
+     *
+     * @param 'namespace'|'package' $policy
+     */
+    public static function setPolicy(string $policy): void
+    {
+        $policy = strtolower($policy);
+        self::$policy = in_array($policy, ['namespace', 'package'], true) ? $policy : 'namespace';
+    }
+
+    /**
      * Psalm event callback executed after class-like analysis.
      *
      * - Iterates the analyzed class-like's `used_traits` and resolves each trait's storage.
@@ -79,7 +99,7 @@ final class TraitUseEnforcer implements AfterClassLikeAnalysisInterface
             if ($isInternal) {
                 foreach ($internalList as $allowedNs) {
                     $allowedNs = rtrim($allowedNs, '\\');
-                    if (self::nsSameOrRelated($currentNamespace, $allowedNs)) {
+                    if (self::nsAllowed($currentNamespace, $allowedNs)) {
                         $allowed = true;
                         break;
                     }
@@ -162,5 +182,38 @@ final class TraitUseEnforcer implements AfterClassLikeAnalysisInterface
         // Return true if either namespace is a descendant of the other
         return ($a !== '' && str_starts_with($aSep, $bSep))  // consumer is descendant of rule
             || ($b !== '' && str_starts_with($bSep, $aSep)); // consumer is ancestor of rule
+    }
+
+    /**
+     * Policy-aware namespace allowance check.
+     *
+     * @param string $consumer Fully qualified namespace of the class/trait using the internal trait.
+     * @param string $rule     Fully qualified namespace of the internal trait.
+     * @return bool True if the consumer namespace is allowed to use the internal trait; false otherwise.
+     */
+    private static function nsAllowed(string $consumer, string $rule): bool
+    {
+        // In package mode, allow if the first segment (vendor/package root) matches.
+        // Global namespace never matches a non-empty rule.
+        if (self::$policy === 'package') {
+            // Normalize both namespaces
+            $rule = trim($rule, '\\');
+            $consumer = trim($consumer, '\\');
+
+            // Global-to-Global
+            if ($rule === '' && $consumer === '') return true;
+
+            // Global doesn't mix with named packages
+            if ($rule === '' || $consumer === '') return false;
+
+            // Extract the first segment (vendor/package root)
+            $first = static fn(string $ns): string => ($pos = strpos($ns, '\\')) === false ? $ns : substr($ns, 0, $pos);
+
+            // Compare the first segments
+            return $first($consumer) === $first($rule);
+        }
+
+        // default 'namespace'
+        return self::nsSameOrRelated($consumer, $rule);
     }
 }
