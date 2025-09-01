@@ -20,10 +20,13 @@ use Ubean\Psalm\Internal\TraitEnforcer\Issues\InternalTraitUse;
  *
  * ---
  * How it decides whether usage is allowed
- * - If a trait declares `@psalm-internal Some\\Ns`, usage is allowed only when
- *   the current namespace is equal to or nested under `Some\\Ns`.
+ * - If a trait declares `@psalm-internal Some\\Ns` (can appear multiple times),
+ *   usage is allowed only when the current namespace is equal to or nested under
+ *   one of the declared namespaces.
  * - Else if a trait is `@internal`, usage is allowed only when the current
  *   namespace is equal to or nested under the trait's declaring namespace.
+ *   For a trait declared in the global namespace, only global-namespace usage
+ *   is allowed.
  * - Otherwise, the trait is considered public and usage is allowed.
  *
  * See also: {@see InternalTraitUse} for why this matters and suggested fixes.
@@ -62,51 +65,51 @@ final class TraitUseEnforcer implements AfterClassLikeAnalysisInterface
                 continue;
             }
 
-           // Get the storage (metadata) of the trait being used
+            // Get the storage (metadata) of the trait being used
             $storage = $codebase->classlike_storage_provider->get($fqTrait);
 
             // Flag for @internal annotation
-            $isInternal = (bool)($storage->internal ?? false);
-
-            // List of namespaces allowed via @psalm-internal
-            /** @var array<string,true> $psalmInternal */
-            $psalmInternal = $storage->psalm_internal ?? [];
+            $isInternal   = (bool)($storage->internal ?? false);
+            $internalList = $storage->internal ?? [$storage->aliases->namespace];
 
             // Assume use is not allowed until proven otherwise
             $allowed = false;
 
-            if ($psalmInternal) {
-                // Trait has @psalm-internal declarations.
-                // Allow only if the current namespace starts with any of the allowed ones.
-                foreach (array_keys($psalmInternal) as $allowedNs) {
+            // Loop through the internal list
+            if ($isInternal) {
+                foreach ($internalList as $allowedNs) {
                     $allowedNs = rtrim($allowedNs, '\\');
-                    if ($allowedNs !== '' && self::nsStartsWith($currentNamespace, $allowedNs)) {
+                    if (self::nsSameOrRelated($currentNamespace, $allowedNs)) {
                         $allowed = true;
                         break;
                     }
                 }
-            } elseif ($isInternal) {
-                // Trait is marked as plain @internal (without @psalm-internal).
-                // Allow only if current namespace matches the declaring namespace.
-                $declaringNs = (string)($storage->namespace_name ?? '');
-                if ($declaringNs !== '' && self::nsStartsWith($currentNamespace, $declaringNs)) {
-                    $allowed = true;
-                }
             } else {
-                // Public trait: always allowed
                 $allowed = true;
             }
 
             // If the trait use is not allowed, raise a custom issue
             if (!$allowed) {
+                // Build "Allowed from:" hint (only when @internal and we have a list)
+                $fmtNs = static fn(string $ns) => $ns === '' ? '(global)' : trim($ns, '\\');
+
+                // Build a list of allowed namespaces
+                $allowedNs = ($isInternal && !empty($internalList))
+                    ? array_values(array_unique(array_map($fmtNs, $internalList)))
+                    : [];
+
+                // Build a hint listing allowed namespaces, if any
+                $hint = $allowedNs ? ' Allowed from: ' . implode(', ', $allowedNs) . '.' : '';
+
+                // Emit the issue
                 IssueBuffer::accepts(
-                     new InternalTraitUse(
+                    new InternalTraitUse(
                         sprintf(
-                            'Trait %s is internal to %s and cannot be used from %s. ' .
-                            'Consider exposing a public API or using a non-internal alternative.',
-                            $fqTrait,
-                            ($storage->namespace_name ?? '(global)'),
-                            ($currentNamespace !== '' ? $currentNamespace : '(global)')
+                            "Trait %s is internal and not accessible from %s.%s\n" .
+                            "Use the package's public API or request exposure.",
+                            $storage->name,
+                            ($currentNamespace !== '' ? $currentNamespace : '(global)'),
+                            $hint
                         ),
                         $location
                     ),
@@ -120,40 +123,44 @@ final class TraitUseEnforcer implements AfterClassLikeAnalysisInterface
     }
 
     /**
-     * Boundary-aware namespace prefix check.
+     * Namespace relationship check (symmetric).
      *
-     * Returns true when `$subjectNs` equals `$prefixNs` or is nested under it,
-     * respecting namespace segment boundaries. For example:
-     * - subject `A\B\C`, prefix `A\B`   => true
-     * - subject `A\BC`,  prefix `A\B`   => false (no segment boundary)
-     * - subject `A\B`,   prefix `A\B`   => true (exact match)
-     * - subject `` (global), any non-empty prefix => false
+     * Returns true when `$subjectNs` and `$ruleNs` are the same, or one is a parent/ancestor
+     * of the other, using segment boundaries. Global ('') matches anything.
+     *
+     * Examples:
+     *  subject 'A\B\C', rule 'A\B'   => true  (descendant)
+     *  subject 'A\B',   rule 'A\B\C' => true  (ancestor)
+     *  subject 'A',     rule 'A\B'   => true  (ancestor)
+     *  subject '',      rule 'A\B'   => true  (global subject matches any rule)
+     *  subject 'A\BC',  rule 'A\B'   => false (no boundary)
+     *  subject 'A\B',   rule 'A\B'   => true  (equal)
+     *  subject 'A\B',   rule ''      => false (no boundary)
      *
      * @param string $subjectNs Fully qualified namespace of the class/trait being checked.
-     * @param string $prefixNs  Fully qualified namespace prefix to test against.
-     * @return bool True if `$subjectNs` is the same as `$prefixNs` or a sub-namespace of it;
+     * @param string $ruleNs    Fully qualified namespace to test against.
+     * @return bool True if `$subjectNs` is the same as `$ruleNs` or a sub-namespace of it;
      *              false otherwise.
      */
-    private static function nsStartsWith(string $subjectNs, string $prefixNs): bool
+    private static function nsSameOrRelated(string $consumer, string $rule): bool
     {
-        // Normalize both namespaces by trimming trailing backslashes
-        // so "App\Service\" and "App\Service" are treated the same.
-        $subject = $subjectNs === '' ? '' : rtrim($subjectNs, '\\');
-        $prefix  = rtrim($prefixNs, '\\');
+        // Normalize both namespaces
+        $a = $consumer === '' ? '' : rtrim($consumer, '\\');
+        $b = $rule === '' ? '' : rtrim($rule, '\\');
 
-        // An empty prefix is not considered valid — nothing can "start with" it.
-        if ($prefix === '') {
-            return false;
-        }
+        // Special handling for global
+        if ($a === '' && $b !== '') return true;
+        if ($b === '' && $a !== '') return false;
 
-        // Exact match: the subject is exactly the same namespace as the prefix.
-        if ($subject === $prefix) {
-            return true;
-        }
+        // Exact match
+        if ($a === $b) return true;
 
-        // Prefix check: add a trailing backslash to both so we only match
-        // complete namespace boundaries. Without this, "A\BC" would incorrectly
-        // be considered a sub-namespace of "A\B".
-        return str_starts_with($subject . '\\', $prefix . '\\');
+        // Boundary-safe ancestor/descendant checks (symmetric)
+        $aSep = $a === '' ? '' : $a . '\\';
+        $bSep = $b === '' ? '' : $b . '\\';
+
+        // Return true if either namespace is a descendant of the other
+        return ($a !== '' && str_starts_with($aSep, $bSep))  // consumer is descendant of rule
+            || ($b !== '' && str_starts_with($bSep, $aSep)); // consumer is ancestor of rule
     }
 }

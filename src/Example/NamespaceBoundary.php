@@ -9,7 +9,7 @@
 
 namespace A\B {
     /**
-     * @internal
+     * @psalm-internal A\B
      */
     trait OnlyForB {}
 }

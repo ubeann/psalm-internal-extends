@@ -21,7 +21,7 @@ namespace {
 }
 
 namespace OtherNs {
-    final class GlobalNotOk {
-        use \GlobalHidden; // expected: error (not in global namespace)
+    final class GlobalDescendantOk {
+        use \GlobalHidden; // allowed: descendant namespace
     }
 }
