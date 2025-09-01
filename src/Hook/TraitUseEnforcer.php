@@ -3,104 +3,81 @@ declare(strict_types=1);
 
 namespace Ubean\Psalm\Internal\TraitEnforcer\Hook;
 
-use PhpParser\Node;
-use PhpParser\Node\Stmt\TraitUse;
-use Psalm\Plugin\Hook\AfterStatementAnalysisInterface;
-use Psalm\Plugin\EventHandler\Event\AfterStatementAnalysisEvent;
 use Psalm\IssueBuffer;
+use Psalm\Plugin\EventHandler\AfterClassLikeAnalysisInterface;
+use Psalm\Plugin\EventHandler\Event\AfterClassLikeAnalysisEvent;
 use Ubean\Psalm\Internal\TraitEnforcer\Issues\InternalTraitUse;
 
 /**
- * TraitUseEnforcer
+ * Hook: TraitUseEnforcer
  *
- * Enforces internal-visibility rules for traits:
- * - `@psalm-internal Namespace\Prefix` → trait may only be used inside the given namespace (or its children).
- * - `@internal` → treated as "internal to the declaring namespace" (heuristic explained below).
+ * Enforces internal-boundary rules for trait usage during Psalm analysis.
  *
- * ---
- * #### Why this exists
- * Psalm already enforces @internal on classes/methods, but trait *use* sites
- * don't currently receive the same protection. This plugin closes that gap by
- * inspecting `use Some\Trait;` statements and raising a dedicated issue when
- * they violate internal boundaries.
+ * This hook inspects every class-like after Psalm's analysis phase and verifies
+ * that any trait it `use`s is not marked as `@internal`/`@psalm-internal` for a
+ * different namespace. If a violation is found, an {@see InternalTraitUse}
+ * issue is emitted at the location of the class-like declaration.
  *
  * ---
- * #### Policy (in order of precedence)
- * 1) If `@psalm-internal` is present: allow only when the *current* namespace
- *    starts with one of the allowed namespace prefixes.
- * 2) Else if `@internal` is present: allow only when the current namespace
- *    starts with the trait's *declaring* namespace (namespace-local heuristic).
- * 3) Otherwise: allow (trait is public).
+ * How it decides whether usage is allowed
+ * - If a trait declares `@psalm-internal Some\\Ns`, usage is allowed only when
+ *   the current namespace is equal to or nested under `Some\\Ns`.
+ * - Else if a trait is `@internal`, usage is allowed only when the current
+ *   namespace is equal to or nested under the trait's declaring namespace.
+ * - Otherwise, the trait is considered public and usage is allowed.
  *
- * ---
- * #### Notes
- * - The "namespace-local" interpretation for `@internal` is a pragmatic default.
- *   If your project treats `@internal` as package-wide (i.e. only usable by the
- *   same Composer package), prefer using `@psalm-internal Vendor\Package` for
- *   precise control, or adjust the policy here.
- * - The error message is actionable and explains the boundary that was crossed.
- *
- * ---
- * #### Suppression
- * - You can suppress the issue via Psalm's standard mechanisms (e.g. baseline
- *   or `@psalm-suppress InternalTraitUse`) if you have a justified exception.
+ * See also: {@see InternalTraitUse} for why this matters and suggested fixes.
  */
-final class TraitUseEnforcer implements AfterStatementAnalysisInterface
+final class TraitUseEnforcer implements AfterClassLikeAnalysisInterface
 {
     /**
-     * Runs after Psalm analyzes each statement.
-     * We only act on `TraitUse` nodes, checking each referenced trait.
+     * Psalm event callback executed after class-like analysis.
      *
-     * @return bool|null Returning null keeps default flow; returning true/false
-     *                   would indicate we modified analysis, which we do not.
+     * - Iterates the analyzed class-like's `used_traits` and resolves each trait's storage.
+     * - Determines whether the current namespace is permitted by `@psalm-internal` or
+     *   `@internal` boundaries.
+     * - Emits an {@see InternalTraitUse} issue if usage is not permitted.
+     *
+     * @param AfterClassLikeAnalysisEvent $event The event context provided by Psalm.
+     * @return bool|null Whether the analysis was successful or not.
      */
-    public static function afterStatementAnalysis(AfterStatementAnalysisEvent $event): ?bool
+    #[\Override]
+    public static function afterStatementAnalysis(AfterClassLikeAnalysisEvent $event): ?bool
     {
-        // Ensure we only process TraitUse statements.
-        $stmt = $event->getStmt();
-        if (!$stmt instanceof TraitUse) {
-            return null;
-        }
-
-        // Gather context for the analysis.
+        // Get the codebase and source information
         $codebase = $event->getCodebase();
         $source   = $event->getStatementsSource();
-        $location = $event->getCodeLocation();
 
-        // Current namespace of the file being analyzed ('' when global).
+        // Get the class-like storage and location information
+        $classlikeStorage = $event->getClasslikeStorage();
+        $location = $classlikeStorage->location;
+
+        // The namespace where this class-like resides ('' means global namespace)
         $currentNamespace = $source->getNamespace() ?? '';
 
-        // A single `use` can import multiple traits: `use A, B, C;`
-        foreach ($stmt->traits as $name) {
-            // Ensure we have a valid trait name.
-            if (!$name instanceof Node\Name) {
+        // Iterate through all keys of used_traits (keys are FQCNs of the traits)
+        foreach (array_keys($classlikeStorage->used_traits) as $fqTrait) {
+            // Skip traits that don't exist in the codebase (e.g., missing/undefined traits)
+            if (!$codebase->classlikes->hasFullyQualifiedTraitName($fqTrait)) {
                 continue;
             }
 
-            // Resolve the fully-qualified class-like name of the trait as seen from this file.
-            $fqcn = $source->getAliases()->getFQCLN($name, $source->getNamespace());
+           // Get the storage (metadata) of the trait being used
+            $storage = $codebase->classlike_storage_provider->get($fqTrait);
 
-            // Only proceed if Psalm knows about this trait.
-            if (!$codebase->classlikes->hasFullyQualifiedTraitName($fqcn)) {
-                continue;
-            }
-
-            // Fetch the trait's storage to inspect its annotations.
-            $storage = $codebase->classlike_storage_provider->get($fqcn);
-
-            // Flags extracted from Psalm's storage for the trait:
-            // 1) Generic @internal flag (bool)
+            // Flag for @internal annotation
             $isInternal = (bool)($storage->internal ?? false);
 
-            // 2) Explicit @psalm-internal scope(s). Psalm stores these as a map of "FQN => true".
+            // List of namespaces allowed via @psalm-internal
             /** @var array<string,true> $psalmInternal */
             $psalmInternal = $storage->psalm_internal ?? [];
 
-            // By default, assume not allowed; we'll prove allowance below.
+            // Assume use is not allowed until proven otherwise
             $allowed = false;
 
-            if (!empty($psalmInternal)) {
-                // Allow if current namespace starts with any allowed namespace prefix.
+            if ($psalmInternal) {
+                // Trait has @psalm-internal declarations.
+                // Allow only if the current namespace starts with any of the allowed ones.
                 foreach (array_keys($psalmInternal) as $allowedNs) {
                     $allowedNs = rtrim($allowedNs, '\\');
                     if ($allowedNs !== '' && self::nsStartsWith($currentNamespace, $allowedNs)) {
@@ -109,26 +86,25 @@ final class TraitUseEnforcer implements AfterStatementAnalysisInterface
                     }
                 }
             } elseif ($isInternal) {
-                // Heuristic for @internal: allow only inside the trait's declaring namespace.
-                // E.g. trait declared in "Lib\Internal" is allowed in "Lib\Internal\*".
+                // Trait is marked as plain @internal (without @psalm-internal).
+                // Allow only if current namespace matches the declaring namespace.
                 $declaringNs = (string)($storage->namespace_name ?? '');
                 if ($declaringNs !== '' && self::nsStartsWith($currentNamespace, $declaringNs)) {
                     $allowed = true;
                 }
             } else {
-                // No internal markers → public trait.
+                // Public trait: always allowed
                 $allowed = true;
             }
 
-
-            // Emit a precise, developer-friendly error. Users can baseline or suppress if needed.
+            // If the trait use is not allowed, raise a custom issue
             if (!$allowed) {
                 IssueBuffer::accepts(
-                    new InternalTraitUse(
+                     new InternalTraitUse(
                         sprintf(
                             'Trait %s is internal to %s and cannot be used from %s. ' .
                             'Consider exposing a public API or using a non-internal alternative.',
-                            $fqcn,
+                            $fqTrait,
                             ($storage->namespace_name ?? '(global)'),
                             ($currentNamespace !== '' ? $currentNamespace : '(global)')
                         ),
@@ -139,35 +115,45 @@ final class TraitUseEnforcer implements AfterStatementAnalysisInterface
             }
         }
 
-        // If we reach this point, the trait use is allowed.
+        // Return null to defer to Psalm's default flow
         return null;
     }
 
     /**
-     * Returns true if $subjectNs is equal to $prefixNs or starts with "$prefixNs\".
+     * Boundary-aware namespace prefix check.
      *
-     * Examples:
-     *  - nsStartsWith('A\B\C', 'A\B')   → true
-     *  - nsStartsWith('A\B',   'A\B')   → true
-     *  - nsStartsWith('A\BC',  'A\B')   → false
-     *  - nsStartsWith('',      'A\B')   → false
+     * Returns true when `$subjectNs` equals `$prefixNs` or is nested under it,
+     * respecting namespace segment boundaries. For example:
+     * - subject `A\B\C`, prefix `A\B`   => true
+     * - subject `A\BC`,  prefix `A\B`   => false (no segment boundary)
+     * - subject `A\B`,   prefix `A\B`   => true (exact match)
+     * - subject `` (global), any non-empty prefix => false
      *
-     * @param string $subjectNs Current/using namespace (may be '').
-     * @param string $prefixNs  Allowed/declaring namespace (non-empty).
+     * @param string $subjectNs Fully qualified namespace of the class/trait being checked.
+     * @param string $prefixNs  Fully qualified namespace prefix to test against.
+     * @return bool True if `$subjectNs` is the same as `$prefixNs` or a sub-namespace of it;
+     *              false otherwise.
      */
     private static function nsStartsWith(string $subjectNs, string $prefixNs): bool
     {
         // Normalize both namespaces by trimming trailing backslashes
+        // so "App\Service\" and "App\Service" are treated the same.
         $subject = $subjectNs === '' ? '' : rtrim($subjectNs, '\\');
         $prefix  = rtrim($prefixNs, '\\');
 
-        // When the prefix is empty, we can't match anything
-        if ($prefix === '') return false;
+        // An empty prefix is not considered valid — nothing can "start with" it.
+        if ($prefix === '') {
+            return false;
+        }
 
-        // If the subject is exactly the same as the prefix, we have a match
-        if ($subject === $prefix) return true;
+        // Exact match: the subject is exactly the same namespace as the prefix.
+        if ($subject === $prefix) {
+            return true;
+        }
 
-        // Require a boundary `\` to avoid false positives like A\BC vs A\B
+        // Prefix check: add a trailing backslash to both so we only match
+        // complete namespace boundaries. Without this, "A\BC" would incorrectly
+        // be considered a sub-namespace of "A\B".
         return str_starts_with($subject . '\\', $prefix . '\\');
     }
 }

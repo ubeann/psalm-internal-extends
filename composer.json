@@ -4,20 +4,35 @@
   "type": "psalm-plugin",
   "license": "MIT",
   "homepage": "https://github.com/ubean/psalm-internal-extends",
-  "keywords": ["psalm", "plugin", "static-analysis", "php", "internal", "traits"],
+  "keywords": [
+    "psalm",
+    "plugin",
+    "static-analysis",
+    "php",
+    "internal",
+    "traits"
+  ],
   "support": {
     "issues": "https://github.com/ubean/psalm-internal-extends/issues",
     "source": "https://github.com/ubean/psalm-internal-extends"
   },
+  "authors": [
+    {
+      "name": "Muhammad Rizal",
+      "email": "ubeannn@gmail.com"
+    }
+  ],
   "require": {
     "php": "^8.1"
   },
   "require-dev": {
-    "vimeo/psalm": "^6.13",
-    "phpunit/phpunit": "^11.5"
+    "phpunit/phpunit": "^11.5",
+    "vimeo/psalm": "^6.13"
   },
   "autoload": {
-    "classmap": ["src/"],
+    "classmap": [
+      "src/"
+    ],
     "psr-4": {
       "Ubean\\Psalm\\Internal\\TraitEnforcer\\": "src/"
     }
@@ -49,11 +64,5 @@
       "/psalm.xml",
       "/phpunit.xml*"
     ]
-  },
-  "authors": [
-    {
-      "name": "Muhammad Rizal",
-      "email": "ubeannn@gmail.com"
-    }
-  ]
+  }
 }

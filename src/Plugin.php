@@ -1,5 +1,4 @@
-<?php
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace Ubean\Psalm\Internal\TraitEnforcer;
 
@@ -38,13 +37,16 @@ final class Plugin implements PluginEntryPointInterface
      * Psalm calls the plugin entry point during initialization.
      *
      * @param RegistrationInterface $registration Provides methods to register hooks.
-     * @param SimpleXMLElement|null $config      Optional <pluginClass> XML from psalm.xml.
+     * @param SimpleXMLElement|null $config       Optional <pluginClass> XML from psalm.xml.
      */
+    #[\Override]
     public function __invoke(RegistrationInterface $registration, ?SimpleXMLElement $config = null): void
     {
         // Register all analysis hooks for this plugin.
         // TraitUseEnforcer performs the actual internal-visibility checks at trait "use" sites.
-        $registration->registerHooksFromClass(TraitUseEnforcer::class);
+        if (class_exists(TraitUseEnforcer::class)) {
+            $registration->registerHooksFromClass(TraitUseEnforcer::class);
+        }
 
         // If you add plugin options later, parse $config here and wire them into your hooks.
         // Example:
