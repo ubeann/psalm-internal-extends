@@ -22,3 +22,6 @@ If not specified, the policy defaults to `namespace`.
 
 ## Issue name
 This plugin emits the issue `InternalTraitUse` when a class uses a trait outside the allowed internal boundary.
+
+## License
+Released under the MIT License. See `LICENSE` for details.
